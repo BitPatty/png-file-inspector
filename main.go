@@ -23,8 +23,8 @@ func main() {
 	}
 
 	vr, err := png.Inspect(bytes, png.InspectOptions{
-		AllowUnknownAncillaryChunks: true,
-		AllowUnknownCriticalChunks:  true,
+		AllowUnknownAncillaryChunks: false,
+		AllowUnknownCriticalChunks:  false,
 	})
 
 	if err != nil {
