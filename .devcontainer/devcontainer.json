@@ -1,0 +1,8 @@
+{
+  "name": "png-file-inspector",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "extensions": ["golang.Go"],
+  "remoteUser": "vscode"
+}
