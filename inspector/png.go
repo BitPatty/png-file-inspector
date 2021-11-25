@@ -16,7 +16,6 @@ const (
 )
 
 type InspectionResult struct {
-	HasLeadingIHDR    bool
 	HasValidSignature bool
 	HasDataAfterIEND  bool
 	Chunks            []ChunkInspectionResult
@@ -43,9 +42,7 @@ func Inspect(bytes []uint8) (InspectionResult, error) {
 
 		nextChunkOffset := i + int(lastChunk.Length) + CHUNK_HEADER_SIZE + CHUNK_LENGTH_SIZE + CHUNK_CRC_SIZE
 
-		if len(res.Chunks) == 1 {
-			res.HasLeadingIHDR = lastChunk.Header == H_IHDR
-		} else if lastChunk.Header == H_IEND {
+		if lastChunk.Header == H_IEND {
 			res.HasDataAfterIEND = nextChunkOffset < len(bytes)
 			return res, nil
 		}
