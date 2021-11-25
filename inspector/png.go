@@ -8,81 +8,63 @@ import (
 )
 
 const (
-	SIGNATURE uint64 = 0x89_50_4E_47_0D_0A_1A_0A
+	SIGNATURE         uint64 = 0x89_50_4E_47_0D_0A_1A_0A
+	SIGNATURE_SIZE    int    = 8
+	CHUNK_HEADER_SIZE int    = 4
+	CHUNK_LENGTH_SIZE int    = 4
+	CHUNK_CRC_SIZE    int    = 4
 )
 
 type InspectionResult struct {
-	metadata struct {
-		IHDRInspectionResult
-	}
-	chunks []ChunkHeaderInspectionResult
+	HasLeadingIHDR    bool
+	HasValidSignature bool
+	HasDataAfterIEND  bool
+	Chunks            []ChunkInspectionResult
 }
 
-type InspectOptions struct {
-	AllowUnknownAncillaryChunks bool
-	AllowUnknownCriticalChunks  bool
-}
-
-func Inspect(bytes []uint8, options InspectOptions) (InspectionResult, error) {
+func Inspect(bytes []uint8) (InspectionResult, error) {
 	if !validateSignature(&bytes) {
-		return InspectionResult{}, fmt.Errorf("invalid PNG signature")
+		return InspectionResult{
+			HasValidSignature: false,
+		}, fmt.Errorf("invalid PNG signature")
 	}
 
 	res := InspectionResult{
-		chunks: []ChunkHeaderInspectionResult{},
+		HasValidSignature: true,
+		Chunks:            []ChunkInspectionResult{},
 	}
 
-	for i := 8; i < len(bytes); {
-		if (i + 12) > len(bytes) {
-			return res, fmt.Errorf("cannot read next chunk, critical length exceeds image size")
+	for i := SIGNATURE_SIZE; i < len(bytes); {
+		lastChunk, err := res.processChunk(&bytes, i)
+
+		if err != nil {
+			return res, err
 		}
 
-		nextChunkLength := binary.BigEndian.Uint32(bytes[i:(i + 4)])
+		nextChunkOffset := i + int(lastChunk.Length) + CHUNK_HEADER_SIZE + CHUNK_LENGTH_SIZE + CHUNK_CRC_SIZE
 
-		if (nextChunkLength & 0x80_00_00_00) > 0 {
-			return res, fmt.Errorf("cannot read next chunk, length is greater than max allowed length")
+		if len(res.Chunks) == 1 {
+			res.HasLeadingIHDR = lastChunk.Header == H_IHDR
+		} else if lastChunk.Header == H_IEND {
+			res.HasDataAfterIEND = nextChunkOffset < len(bytes)
+			return res, nil
 		}
 
-		if (i + 12 + int(nextChunkLength)) > len(bytes) {
-			return res, fmt.Errorf("cannot read next chunk, data length exceeds image size")
-		}
-
-		headerValue := HeaderValue(binary.BigEndian.Uint32(bytes[(i + 4):(i + 8)]))
-
-		chunk := Chunk{
-			length: nextChunkLength,
-			header: headerValue,
-			data:   ChunkData(bytes[(i + 8):(i + 8 + int(nextChunkLength))]),
-			crc:    binary.BigEndian.Uint32(bytes[(i + 8 + int(nextChunkLength)):(i + 8 + int(nextChunkLength) + 4)]),
-		}
-
-		headerData := chunk.header.inspect()
-
-		if !headerData.isStandardized {
-			if headerData.isAncillary && !options.AllowUnknownAncillaryChunks {
-				return res, fmt.Errorf("unknown ancillary chunk %v", headerData.header)
-			} else if !headerData.isAncillary && !options.AllowUnknownCriticalChunks {
-				return res, fmt.Errorf("unknown critical chunk %v", headerData.header)
-			}
-		}
-
-		res.chunks = append(res.chunks, headerData)
-
-		i += int(nextChunkLength) + 12
-
-		switch chunk.header {
-		case H_IHDR:
-			res.metadata = struct{ IHDRInspectionResult }{
-				chunk.data.inspectIHDRData(),
-			}
-		case H_IEND:
-			if i < len(bytes) {
-				return res, fmt.Errorf("found data after IEND")
-			}
-		}
+		i = nextChunkOffset
 	}
 
-	return res, nil
+	return res, fmt.Errorf("Missing critical data")
+}
+
+func (res *InspectionResult) processChunk(bytes *[]uint8, offset int) (Chunk, error) {
+	c, err := loadNextChunk(bytes, offset)
+
+	if err != nil {
+		return c, err
+	}
+
+	res.Chunks = append(res.Chunks, c.inspect())
+	return c, nil
 }
 
 func validateSignature(bytes *[]uint8) bool {
@@ -90,5 +72,26 @@ func validateSignature(bytes *[]uint8) bool {
 		return false
 	}
 
-	return binary.BigEndian.Uint64((*bytes)[:8]) == SIGNATURE
+	return binary.BigEndian.Uint64((*bytes)[:SIGNATURE_SIZE]) == SIGNATURE
+}
+
+func loadNextChunk(bytes *[]uint8, offset int) (Chunk, error) {
+	c := Chunk{}
+
+	if (offset + 12) > len(*bytes) {
+		return c, fmt.Errorf("cannot load chunk, metadata length exceeds size")
+	}
+
+	c.Length = binary.BigEndian.Uint32((*bytes)[(offset):(offset + CHUNK_LENGTH_SIZE)])
+	c.RawHeader = (*bytes)[(offset + CHUNK_LENGTH_SIZE):(offset + CHUNK_LENGTH_SIZE + CHUNK_HEADER_SIZE)]
+	c.Header = HeaderValue(binary.BigEndian.Uint32(c.RawHeader[:]))
+
+	if (offset + 12 + int(c.Length)) > len(*bytes) {
+		return c, fmt.Errorf("cannot load chunk, data length exceeds size (%v at position %v)", c.Header.ToString(), offset)
+	}
+
+	c.Data = ChunkData((*bytes)[(offset + 8):(offset + 8 + int(c.Length))])
+	c.CRC = binary.BigEndian.Uint32((*bytes)[(offset + 8 + int(c.Length)):(offset + 8 + int(c.Length) + 4)])
+
+	return c, nil
 }
