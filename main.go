@@ -29,7 +29,6 @@ func main() {
 	}
 
 	fmt.Printf("Valid Signature: %+v\n", vr.HasValidSignature)
-	fmt.Printf("Leading IHDR: %+v\n", vr.HasLeadingIHDR)
 	fmt.Printf("Data after IEND: %+v\n", vr.HasDataAfterIEND)
 
 	for i := 0; i < len(vr.Chunks); i++ {
