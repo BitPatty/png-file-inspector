@@ -12,67 +12,58 @@ const (
 	SIGNATURE_SIZE    int    = 8
 	CHUNK_HEADER_SIZE int    = 4
 	CHUNK_LENGTH_SIZE int    = 4
-	CHUNK_CRC_SIZE    int    = 32
-	CHUNK_MIN_SIZE    int    = CHUNK_LENGTH_SIZE + CHUNK_HEADER_SIZE + CHUNK_CRC_SIZE
+	CHUNK_CRC_SIZE    int    = 4
 )
 
 type InspectionResult struct {
-	hasValidSignature bool
-	metadata          struct {
-		IHDRInspectionResult
-	}
-	chunks []ChunkHeaderInspectionResult
+	HasLeadingIHDR    bool
+	HasValidSignature bool
+	HasDataAfterIEND  bool
+	Chunks            []ChunkInspectionResult
 }
 
-type InspectOptions struct {
-	AllowUnknownAncillaryChunks bool
-	AllowUnknownCriticalChunks  bool
-}
-
-func Inspect(bytes []uint8, options InspectOptions) (InspectionResult, error) {
+func Inspect(bytes []uint8) (InspectionResult, error) {
 	if !validateSignature(&bytes) {
 		return InspectionResult{
-			hasValidSignature: false,
+			HasValidSignature: false,
 		}, fmt.Errorf("invalid PNG signature")
 	}
 
 	res := InspectionResult{
-		chunks: []ChunkHeaderInspectionResult{},
+		HasValidSignature: true,
+		Chunks:            []ChunkInspectionResult{},
 	}
 
 	for i := SIGNATURE_SIZE; i < len(bytes); {
-		lastChunk, err := res.processChunk(&bytes, i, options)
+		lastChunk, err := res.processChunk(&bytes, i)
 
 		if err != nil {
 			return res, err
 		}
 
-		nextChunkOffset := i + int(lastChunk.length) + CHUNK_MIN_SIZE
+		nextChunkOffset := i + int(lastChunk.Length) + CHUNK_HEADER_SIZE + CHUNK_LENGTH_SIZE + CHUNK_CRC_SIZE
 
-		if (len(res.chunks) == 1) && (lastChunk.header != H_IHDR) {
-			return res, fmt.Errorf("first chunk must be IHDR")
-		} else if lastChunk.header == H_IHDR {
-			res.metadata = struct{ IHDRInspectionResult }{
-				lastChunk.data.inspectIHDRData(),
-			}
-		} else if (lastChunk.header == H_IEND) && (nextChunkOffset < len(bytes)) {
-			return res, fmt.Errorf("additional data present after IEND")
+		if len(res.Chunks) == 1 {
+			res.HasLeadingIHDR = lastChunk.Header == H_IHDR
+		} else if lastChunk.Header == H_IEND {
+			res.HasDataAfterIEND = nextChunkOffset < len(bytes)
+			return res, nil
 		}
 
 		i = nextChunkOffset
 	}
 
-	return res, nil
+	return res, fmt.Errorf("Missing critical data")
 }
 
-func (res *InspectionResult) processChunk(bytes *[]uint8, offset int, options InspectOptions) (Chunk, error) {
+func (res *InspectionResult) processChunk(bytes *[]uint8, offset int) (Chunk, error) {
 	c, err := loadNextChunk(bytes, offset)
 
 	if err != nil {
 		return c, err
 	}
 
-	res.chunks = append(res.chunks, c.header.inspect())
+	res.Chunks = append(res.Chunks, c.inspect())
 	return c, nil
 }
 
@@ -91,33 +82,16 @@ func loadNextChunk(bytes *[]uint8, offset int) (Chunk, error) {
 		return c, fmt.Errorf("cannot load chunk, metadata length exceeds size")
 	}
 
-	c.length = binary.BigEndian.Uint32((*bytes)[(offset):(offset + CHUNK_LENGTH_SIZE)])
-	c.header = HeaderValue(binary.BigEndian.Uint32((*bytes)[(offset + CHUNK_LENGTH_SIZE):(offset + CHUNK_LENGTH_SIZE + CHUNK_HEADER_SIZE)]))
+	c.Length = binary.BigEndian.Uint32((*bytes)[(offset):(offset + CHUNK_LENGTH_SIZE)])
+	c.RawHeader = (*bytes)[(offset + CHUNK_LENGTH_SIZE):(offset + CHUNK_LENGTH_SIZE + CHUNK_HEADER_SIZE)]
+	c.Header = HeaderValue(binary.BigEndian.Uint32(c.RawHeader[:]))
 
-	if (offset + 12 + int(c.length)) > len(*bytes) {
-		return c, fmt.Errorf("cannot load chunk, data length exceeds size")
+	if (offset + 12 + int(c.Length)) > len(*bytes) {
+		return c, fmt.Errorf("cannot load chunk, data length exceeds size (%v at position %v)", c.Header.ToString(), offset)
 	}
 
-	c.data = ChunkData((*bytes)[(offset + 8):(offset + 8 + int(c.length))])
-	c.crc = binary.BigEndian.Uint32((*bytes)[(offset + 8 + int(c.length)):(offset + 8 + int(c.length) + 4)])
+	c.Data = ChunkData((*bytes)[(offset + 8):(offset + 8 + int(c.Length))])
+	c.CRC = binary.BigEndian.Uint32((*bytes)[(offset + 8 + int(c.Length)):(offset + 8 + int(c.Length) + 4)])
 
 	return c, nil
 }
-
-// func printHeaderString(h HeaderValue) {
-// 	s := ""
-
-// 	for i := 3; i >= 0; i-- {
-// 		s += string(uint8((h >> (i * 8)) & 0xFF))
-// 	}
-
-// 	fmt.Println(s)
-// }
-
-// 	if !headerData.isStandardized {
-// 		if headerData.isAncillary && !options.AllowUnknownAncillaryChunks {
-// 			return c, fmt.Errorf("unknown ancillary chunk %v", headerData.header)
-// 		} else if !headerData.isAncillary && !options.AllowUnknownCriticalChunks {
-// 			return c, fmt.Errorf("unknown critical chunk %v", headerData.header)
-// 		}
-// 	}

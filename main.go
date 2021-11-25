@@ -22,14 +22,17 @@ func main() {
 		panic(err)
 	}
 
-	vr, err := png.Inspect(bytes, png.InspectOptions{
-		AllowUnknownAncillaryChunks: false,
-		AllowUnknownCriticalChunks:  false,
-	})
+	vr, err := png.Inspect(bytes)
 
 	if err != nil {
 		defer fmt.Println(err)
 	}
 
-	fmt.Printf("%+v\n", vr)
+	fmt.Printf("Valid Signature: %+v\n", vr.HasValidSignature)
+	fmt.Printf("Leading IHDR: %+v\n", vr.HasLeadingIHDR)
+	fmt.Printf("Data after IEND: %+v\n", vr.HasDataAfterIEND)
+
+	for i := 0; i < len(vr.Chunks); i++ {
+		fmt.Printf("%v: %+v\n", vr.Chunks[i].Header.Value.ToString(), vr.Chunks[i])
+	}
 }

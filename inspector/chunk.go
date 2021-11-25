@@ -1,36 +1,45 @@
 package pngscanner
 
-import (
-	"encoding/binary"
-)
+import "hash/crc32"
 
 type ChunkData []uint8
 
 type Chunk struct {
-	length uint32
-	header HeaderValue
-	data   ChunkData
-	crc    uint32
+	Length    uint32
+	RawHeader []uint8
+	Header    HeaderValue
+	Data      ChunkData
+	CRC       uint32
 }
 
-type IHDRInspectionResult struct {
-	width             uint32
-	height            uint32
-	bitDepth          uint8
-	colourType        uint8
-	compressionMethod uint8
-	filterMethod      uint8
-	interlaceMethod   uint8
+type ChunkInspectionResult struct {
+	Header           ChunkHeaderInspectionResult
+	Length           int
+	HasValidChecksum bool
+	Report           interface{}
 }
 
-func (c *ChunkData) inspectIHDRData() IHDRInspectionResult {
-	return IHDRInspectionResult{
-		width:             binary.BigEndian.Uint32((*c)[0:4]),
-		height:            binary.BigEndian.Uint32((*c)[4:8]),
-		bitDepth:          (*c)[8],
-		colourType:        (*c)[9],
-		compressionMethod: (*c)[10],
-		filterMethod:      (*c)[11],
-		interlaceMethod:   (*c)[12],
+func (c *Chunk) inspect() ChunkInspectionResult {
+	res := ChunkInspectionResult{
+		Header:           c.Header.inspect(),
+		Length:           len(c.Data),
+		HasValidChecksum: c.calculateCrc32() == c.CRC,
 	}
+
+	switch c.Header {
+	case H_IHDR:
+		res.Report = inspectIHDRData(&c.Data)
+	case H_PLTE:
+		res.Report = inspectPLTEData(&c.Data)
+	case H_IEND:
+		res.Report = inspectIENDData(&c.Data)
+	default:
+		res.Report = nil
+	}
+
+	return res
+}
+
+func (c *Chunk) calculateCrc32() uint32 {
+	return crc32.ChecksumIEEE(append(c.RawHeader[0:4], []uint8(c.Data)...))
 }
